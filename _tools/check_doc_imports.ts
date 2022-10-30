@@ -1,7 +1,9 @@
 // Copyright 2022-2022 the Deno authors. All rights reserved. MIT license.
 
 import { blue, red, yellow } from "../fmt/colors.ts";
+import { toFileUrl } from "../path/mod.ts";
 import { walk } from "../fs/walk.ts";
+import { doc } from "https://deno.land/x/deno_doc@0.47.0/mod.ts";
 import {
   createSourceFile,
   ImportDeclaration,
@@ -22,9 +24,6 @@ const ROOT = new URL("../", import.meta.url);
 const ROOT_LENGTH = ROOT.pathname.slice(0, -1).length;
 const FAIL_FAST = Deno.args.includes("--fail-fast");
 const TEST_MODE = Deno.args.includes("--test-mode");
-
-const RX_JSDOC_COMMENT = /\*\*[^*]*\*+(?:[^/*][^*]*\*+)*/mg;
-const RX_JSDOC_REMOVE_LEADING_ASTERISK = /^\s*\* ?/gm;
 const RX_CODE_BLOCK = /`{3}([\w]*)\n([\S\s]+?)\n`{3}/gm;
 
 const root = TEST_MODE ? new URL("./_tools/testdata", ROOT) : ROOT;
@@ -85,10 +84,11 @@ for await (
     skip: EXCLUDED_PATHS.map((p) => new RegExp(`(${p})$`)),
   })
 ) {
-  const content = await Deno.readTextFile(path);
   countChecked++;
 
   if (path.endsWith(".md")) {
+    const content = await Deno.readTextFile(path);
+
     for (const codeBlockMatch of content.matchAll(RX_CODE_BLOCK)) {
       const [, , codeBlock] = codeBlockMatch;
       const codeBlockLineNumber =
@@ -101,23 +101,22 @@ for await (
       );
     }
   } else {
-    for (const jsdocMatch of content.matchAll(RX_JSDOC_COMMENT)) {
-      const comment = jsdocMatch[0].replaceAll(
-        RX_JSDOC_REMOVE_LEADING_ASTERISK,
-        "",
-      );
-      const commentLineNumber =
-        content.slice(0, jsdocMatch.index).split("\n").length;
+    for (const { location: { line }, jsDoc } of await doc(toFileUrl(path).href, { includeAll: true })) { 
+      const doc = jsDoc?.doc;
 
-      for (const codeBlockMatch of comment.matchAll(RX_CODE_BLOCK)) {
+      if (!doc) {
+        continue;
+      }
+
+      for (const codeBlockMatch of doc.matchAll(RX_CODE_BLOCK)) {
         const [, , codeBlock] = codeBlockMatch;
         const codeBlockLineNumber =
-          comment.slice(0, codeBlockMatch.index).split("\n").length;
+          doc.slice(0, codeBlockMatch.index).split("\n").length + 1;
 
         checkImportStatements(
           codeBlock,
           path,
-          commentLineNumber + codeBlockLineNumber,
+          line + codeBlockLineNumber,
         );
       }
     }
